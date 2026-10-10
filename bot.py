@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 import requests
 
 # --- TUS CREDENCIALES INTEGRADAS ---
@@ -10,20 +11,59 @@ CHAT_ID = "5484160028"
 BANKROLL_INICIAL = 500000.0  # Banca inicial (Ej: 500,000 COP)
 STAKE_UNIDADES_FIJAS = 2.0   # 2 unidades por apuesta recomendada
 
+def enviar_mensaje_telegram(texto, chat_target=CHAT_ID):
+    """
+    Envía cualquier mensaje de texto a Telegram.
+    """
+    url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": chat_target,
+        "text": texto,
+        "parse_mode": "Markdown"
+    }
+    try:
+        requests.post(url_tg, json=payload)
+    except Exception as e:
+        print(f"Error enviando mensaje a Telegram: {e}")
+
+def escuchar_comandos():
+    """
+    Escucha de forma continua los mensajes que le envías al bot en Telegram (como /start).
+    """
+    offset = 0
+    print("Iniciando escuchador de comandos de Telegram...")
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates?offset={offset}&timeout=30"
+            response = requests.get(url)
+            data = response.json()
+            
+            if data.get("ok"):
+                for result in data.get("result", []):
+                    offset = result["update_id"] + 1
+                    message = result.get("message", {})
+                    text = message.get("text", "")
+                    chat_id_remitente = str(message.get("chat", {}).get("id", ""))
+                    
+                    if text.startswith("/start"):
+                        respuesta = "✅ *¡Bot activado con éxito!* Ya estoy en marcha y buscando las mejores apuestas basadas en datos estadísticos para ti."
+                        enviar_mensaje_telegram(respuesta, chat_target=chat_id_remitente)
+        except Exception as e:
+            print(f"Error en el escuchador de Telegram: {e}")
+            time.sleep(5)
+
 def obtener_partidos_y_cuotas():
     """
     Función de adquisición de partidos y cuotas (Betplay / Betano u otras casas).
-    Puedes conectar aquí tu API deportiva o de cuotas favorita.
     """
     try:
-        # Estructura simulada de alta precisión para análisis estadístico y de cuotas:
         partidos_simulados = [
             {
                 "local": "Independiente Medellín",
                 "visitante": "Millonarios",
                 "mercado": "Más de 2.5 Goles",
-                "cuota_casa": 2.15,          # Cuota ofrecida por la casa
-                "probabilidad_modelo": 57.0  # Porcentaje real determinado por tus estadísticas
+                "cuota_casa": 2.15,
+                "probabilidad_modelo": 57.0
             }
         ]
         return partidos_simulados
@@ -32,21 +72,14 @@ def obtener_partidos_y_cuotas():
         return []
 
 def evaluar_y_filtrar_apuestas(partido, bankroll_actual):
-    """
-    Motor matemático: Calcula el Expected Value (EV) y define si hay error de cuota.
-    """
     prob_real = partido["probabilidad_modelo"] / 100.0
     cuota_ofrecida = partido["cuota_casa"]
     
-    # Cuota justa matemática limpia
     cuota_justa = 1 / prob_real if prob_real > 0 else 99.0
-    
-    # Expected Value (EV > 0.04 significa valor positivo superior al 4%)
     expected_value = (prob_real * cuota_ofrecida) - 1
     es_value_bet = expected_value > 0.04  
     
-    # Control de Banca y Riesgo Monetario
-    valor_unidad = bankroll_actual * 0.01  # 1 unidad equivale al 1% de la banca actual
+    valor_unidad = bankroll_actual * 0.01
     riesgo_dinero = STAKE_UNIDADES_FIJAS * valor_unidad
     
     return {
@@ -58,9 +91,6 @@ def evaluar_y_filtrar_apuestas(partido, bankroll_actual):
     }
 
 def enviar_alerta_telegram(partido, analisis, banca):
-    """
-    Envía la alerta estructurada directamente a tu chat personal de Telegram.
-    """
     mensaje = f"""
 🚨 **ALERTA DE VALOR DETECTADA** 🚨
 
@@ -74,23 +104,12 @@ def enviar_alerta_telegram(partido, analisis, banca):
 
 📝 *Análisis automatizado basado en datos estadísticos y desajuste de líneas.*
     """
-    
-    url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": mensaje,
-        "parse_mode": "Markdown"
-    }
-    try:
-        response = requests.post(url_tg, json=payload)
-        if response.status_code == 200:
-            print("Alerta enviada con éxito a Telegram.")
-        else:
-            print(f"Error al enviar a Telegram: {response.text}")
-    except Exception as e:
-        print(f"Excepción de red enviando a Telegram: {e}")
+    enviar_mensaje_telegram(mensaje, chat_target=CHAT_ID)
 
-def ciclo_principal():
+def ciclo_analisis():
+    """
+    Motor principal que analiza partidos y envía alertas automáticas cada cierto tiempo.
+    """
     print("Iniciando motor de análisis y control de banca 24/7...")
     banca_actual = BANKROLL_INICIAL
     
@@ -107,8 +126,11 @@ def ciclo_principal():
             else:
                 print(f"Partido descartado: {partido['local']} vs {partido['visitante']} (Sin margen de valor suficiente).")
                 
-        # El bot descansa 3 horas (10800 segundos) antes de volver a escanear para optimizar uso de APIs
-        time.sleep(10800) 
+        time.sleep(10800) # Descansa 3 horas antes del próximo escaneo
 
 if __name__ == "__main__":
-    ciclo_principal()
+    # Usamos hilos (threads) para que el bot escuche el comando /start y analice partidos al mismo tiempo
+    hilo_escucha = threading.Thread(target=escuchar_comandos)
+    hilo_escucha.start()
+
+    ciclo_analisis()
